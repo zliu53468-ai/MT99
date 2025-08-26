@@ -3,11 +3,11 @@ from flask_cors import CORS
 import numpy as np
 
 app = Flask(__name__)
-CORS(app)  # ✅ 加入 CORS 支援，允許跨網域請求
+CORS(app)  # ✅ 允許跨網域請求，支援 CodePen 等前端呼叫
 
 # 模擬模型預測（實際部署時請載入訓練好的模型）
 def mock_predict(features):
-    xgb_pred = np.array([0.6, 0.3, 0.1])  # 莊/閒/和
+    xgb_pred = np.array([0.6, 0.3, 0.1])  # 莊 / 閒 / 和
     lgb_pred = np.array([0.5, 0.4, 0.1])
     final_pred = (xgb_pred + lgb_pred) / 2
     return {
@@ -16,6 +16,7 @@ def mock_predict(features):
         "tie": round(final_pred[2], 2)
     }
 
+# 特徵提取邏輯：分析 roadmap 中的連莊、連閒、跳牌、長牌等
 def extract_features(roadmap):
     features = {
         "banker_streak": 0,
@@ -45,6 +46,7 @@ def extract_features(roadmap):
             features["long_player"] += 1
     return np.array(list(features.values())).reshape(1, -1)
 
+# API 路由：接收 roadmap，回傳預測結果
 @app.route("/predict", methods=["POST"])
 def predict():
     data = request.get_json()
@@ -53,5 +55,6 @@ def predict():
     prediction = mock_predict(features)
     return jsonify(prediction)
 
+# 啟動 Flask 伺服器（部署時會由 gunicorn 啟動）
 if __name__ == "__main__":
     app.run(debug=True)
