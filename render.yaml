@@ -1,0 +1,8 @@
+services:
+  - type: web
+    name: baccarat-api
+    env: python
+    plan: free
+    buildCommand: ""
+    startCommand: gunicorn backend:app
+    autoDeploy: true
