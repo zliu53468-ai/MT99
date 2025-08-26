@@ -5,12 +5,63 @@ import numpy as np
 app = Flask(__name__)
 CORS(app)
 
-# ✅ 馬可夫轉移矩陣（根據最後一手預測下一手機率）
+# ✅ 馬可夫轉移矩陣
 transition_matrix = {
     "莊": {"莊": 0.6, "閒": 0.3, "和": 0.1},
     "閒": {"莊": 0.4, "閒": 0.5, "和": 0.1},
     "和": {"莊": 0.5, "閒": 0.4, "和": 0.1}
 }
+
+# ✅ 建構格狀路單
+def build_grid(roadmap):
+    grid = {}
+    col = 0
+    row = 0
+    last = None
+    max_rows = 6
+
+    for item in roadmap:
+        if item not in ["莊", "閒", "和"]:
+            continue
+        if item == last and row < max_rows - 1:
+            row += 1
+        else:
+            col += 1
+            row = 0
+        grid[(col, row)] = item
+        last = item
+    return grid
+
+# ✅ 分析格狀路單特徵
+def analyze_grid(grid):
+    long_streaks = 0
+    zigzag_count = 0
+    tie_influence = 0
+
+    for col in range(1, 30):
+        streak = 0
+        for row in range(6):
+            key = (col, row)
+            if key in grid:
+                if row > 0 and grid[(col, row)] == grid[(col, row - 1)]:
+                    streak += 1
+        if streak >= 3:
+            long_streaks += 1
+
+    for col in range(1, 30):
+        for row in range(1, 6):
+            a = grid.get((col, row))
+            b = grid.get((col, row - 1))
+            if a and b and a != b:
+                zigzag_count += 1
+
+    tie_influence = sum(1 for v in grid.values() if v == "和")
+
+    return {
+        "long_streaks": long_streaks,
+        "zigzag_count": zigzag_count,
+        "tie_influence": tie_influence
+    }
 
 # ✅ 特徵抽取函式
 def extract_features(roadmap):
@@ -50,28 +101,30 @@ def markov_predict(roadmap):
     else:
         return {"莊": 0.33, "閒": 0.33, "和": 0.34}
 
-# ✅ 混合預測函式（馬可夫 + 特徵加權）
+# ✅ 混合預測函式（馬可夫 + 特徵 + 路單分析）
 def hybrid_predict(features, roadmap):
     markov = markov_predict(roadmap)
     banker_streak, player_streak, jump_count, long_banker, long_player = features[0]
 
+    grid = build_grid(roadmap)
+    grid_analysis = analyze_grid(grid)
+
     feature_score = {
-        "莊": 0.5 + 0.05 * banker_streak + 0.03 * long_banker,
-        "閒": 0.5 + 0.05 * player_streak + 0.03 * long_player,
-        "和": 0.1 + 0.02 * jump_count
+        "莊": 0.5 + 0.05 * banker_streak + 0.03 * long_banker + 0.04 * grid_analysis["long_streaks"],
+        "閒": 0.5 + 0.05 * player_streak + 0.03 * long_player + 0.04 * grid_analysis["zigzag_count"],
+        "和": 0.1 + 0.02 * jump_count + 0.03 * grid_analysis["tie_influence"]
     }
 
-    # 加權平均（馬可夫 70%，特徵 30%）
     final = {}
     for key in ["莊", "閒", "和"]:
         final[key] = 0.7 * markov[key] + 0.3 * feature_score[key]
 
-    # 正規化
     total = sum(final.values())
     return {
         "banker": round(final["莊"] / total, 2),
         "player": round(final["閒"] / total, 2),
-        "tie": round(final["和"] / total, 2)
+        "tie": round(final["和"] / total, 2),
+        "grid_analysis": grid_analysis
     }
 
 # ✅ API 路由
