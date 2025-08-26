@@ -3,20 +3,16 @@ from flask_cors import CORS
 import numpy as np
 
 app = Flask(__name__)
-CORS(app)  # ✅ 允許跨網域請求，支援 CodePen 等前端呼叫
+CORS(app)
 
-# 模擬模型預測（實際部署時請載入訓練好的模型）
-def mock_predict(features):
-    xgb_pred = np.array([0.6, 0.3, 0.1])  # 莊 / 閒 / 和
-    lgb_pred = np.array([0.5, 0.4, 0.1])
-    final_pred = (xgb_pred + lgb_pred) / 2
-    return {
-        "banker": round(final_pred[0], 2),
-        "player": round(final_pred[1], 2),
-        "tie": round(final_pred[2], 2)
-    }
+# ✅ 馬可夫轉移矩陣（根據最後一手預測下一手機率）
+transition_matrix = {
+    "莊": {"莊": 0.6, "閒": 0.3, "和": 0.1},
+    "閒": {"莊": 0.4, "閒": 0.5, "和": 0.1},
+    "和": {"莊": 0.5, "閒": 0.4, "和": 0.1}
+}
 
-# 特徵提取邏輯：分析 roadmap 中的連莊、連閒、跳牌、長牌等
+# ✅ 特徵抽取函式
 def extract_features(roadmap):
     features = {
         "banker_streak": 0,
@@ -46,15 +42,46 @@ def extract_features(roadmap):
             features["long_player"] += 1
     return np.array(list(features.values())).reshape(1, -1)
 
-# API 路由：接收 roadmap，回傳預測結果
+# ✅ 馬可夫預測函式
+def markov_predict(roadmap):
+    last = next((x for x in reversed(roadmap) if x in ["莊", "閒", "和"]), None)
+    if last and last in transition_matrix:
+        return transition_matrix[last]
+    else:
+        return {"莊": 0.33, "閒": 0.33, "和": 0.34}
+
+# ✅ 混合預測函式（馬可夫 + 特徵加權）
+def hybrid_predict(features, roadmap):
+    markov = markov_predict(roadmap)
+    banker_streak, player_streak, jump_count, long_banker, long_player = features[0]
+
+    feature_score = {
+        "莊": 0.5 + 0.05 * banker_streak + 0.03 * long_banker,
+        "閒": 0.5 + 0.05 * player_streak + 0.03 * long_player,
+        "和": 0.1 + 0.02 * jump_count
+    }
+
+    # 加權平均（馬可夫 70%，特徵 30%）
+    final = {}
+    for key in ["莊", "閒", "和"]:
+        final[key] = 0.7 * markov[key] + 0.3 * feature_score[key]
+
+    # 正規化
+    total = sum(final.values())
+    return {
+        "banker": round(final["莊"] / total, 2),
+        "player": round(final["閒"] / total, 2),
+        "tie": round(final["和"] / total, 2)
+    }
+
+# ✅ API 路由
 @app.route("/predict", methods=["POST"])
 def predict():
     data = request.get_json()
     roadmap = data.get("roadmap", [])
     features = extract_features(roadmap)
-    prediction = mock_predict(features)
+    prediction = hybrid_predict(features, roadmap)
     return jsonify(prediction)
 
-# 啟動 Flask 伺服器（部署時會由 gunicorn 啟動）
 if __name__ == "__main__":
     app.run(debug=True)
