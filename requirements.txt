@@ -1,7 +1,6 @@
 flask
-xgboost
-lightgbm
-scikit-learn
-numpy
+flask-cors
 gunicorn
+numpy
+
 
