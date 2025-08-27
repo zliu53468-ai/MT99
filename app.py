@@ -1,7 +1,12 @@
+# 為了處理 CORS (跨來源資源共享)，需要安裝此套件：
+# pip install flask-cors
+
 from flask import Flask, request, jsonify
+from flask_cors import CORS  # 導入 CORS
 import os
 
 app = Flask(__name__)
+CORS(app)  # 啟用 CORS，允許跨網域請求
 
 def detect_patterns(roadmap):
     """
@@ -58,13 +63,38 @@ def detect_patterns(roadmap):
 
     return patterns
 
-@app.route("/detect", methods=["POST"])
+# 修正：將端點從 "/detect" 改為 "/predict" 以匹配前端程式碼
+@app.route("/predict", methods=["POST"])
 def detect():
     data = request.get_json()
     roadmap = data.get("roadmap")
     result = detect_patterns(roadmap)
-    return jsonify({"patterns": result})
+    
+    # 因為你的前端預期回傳的格式是 {banker: ..., player: ..., tie: ...}
+    # 但你的後端目前只會回傳 {patterns: ...}
+    # 這裡我提供一個暫時的範例回傳，你需要根據你的AI模型調整這段邏輯
+    # 假設你用patterns來做預測，這裡只是範例
+    
+    # 判斷是否有長龍或單跳
+    has_long_dragon = "long_dragon" in result
+    has_single_jump = "single_jump" in result
+
+    # 根據偵測到的模式返回不同的機率
+    if has_long_dragon:
+        # 如果有長龍，預測長龍方勝率高
+        predictions = {"banker": 0.55, "player": 0.40, "tie": 0.05}
+    elif has_single_jump:
+        # 如果有單跳，預測跳方勝率高
+        predictions = {"banker": 0.40, "player": 0.55, "tie": 0.05}
+    else:
+        # 預設平均機率
+        predictions = {"banker": 0.45, "player": 0.45, "tie": 0.10}
+
+    # 這裡的範例是基於你提供的偵測邏輯，並非一個完整的 AI 預測模型
+    return jsonify(predictions)
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+
