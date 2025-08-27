@@ -3,7 +3,3 @@ flask-cors
 gunicorn
 joblib
 scikit-learn
-
-
-
-
