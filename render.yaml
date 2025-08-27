@@ -3,6 +3,8 @@ services:
     name: baccarat-api
     env: python
     plan: free
+    runtime: python
+    pythonVersion: "3.10"
     buildCommand: "pip install -r requirements.txt"
     startCommand: "gunicorn app:app --workers 1 --threads 2 --timeout 60"
     envVars:
@@ -10,10 +12,10 @@ services:
         value: "1"
       - key: GUNICORN_CMD_ARGS
         value: "--preload"
-    # 添加模型文件處理
-    buildFilter:
-      paths:
-        - "*.py"
-        - "*.pkl"
-        - "requirements.txt"
-        - "*.txt"
+    ignore: |
+      __pycache__
+      .git
+      .github
+      README.md
+    autoDeploy: true
+    branch: main
