@@ -3,10 +3,10 @@ services:
     name: baccarat-api
     env: python
     plan: free
-    # 修正建置指令，移除開頭的 $ 符號
     buildCommand: "pip install -r requirements.txt"
-    # startCommand 修正為 gunicorn app:app
-    # 前面的 'app' 是你的檔名 (app.py)，後面的 'app' 是 Flask 實例名稱
-    startCommand: gunicorn app:app
-    autoDeploy: true
-
+    startCommand: "gunicorn app:app --workers 1 --threads 2 --timeout 60"
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: GUNICORN_CMD_ARGS
+        value: "--preload"
