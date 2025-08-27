@@ -83,6 +83,9 @@ def predict():
     接收資料進行預測或訓練。
     """
     data = request.get_json(force=True)
+    
+    # 為了幫助偵錯，印出接收到的資料
+    print(f"接收到的資料: {data}")
 
     # 支援 features 與 roadmap 兩種輸入
     features = data.get("features")
@@ -99,6 +102,8 @@ def predict():
     global model
     if label is not None:
         try:
+            # 訓練模型需要有莊家(0)和閒家(1)兩種類型的資料，模型才能學習其差異
+            print(f"正在使用標籤 {label} 訓練模型...")
             model = update_model_with_new_data(features, label)
         except ValueError as e:
             # 處理標籤不正確的錯誤
