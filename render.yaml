@@ -4,5 +4,7 @@ services:
     env: python
     plan: free
     buildCommand: ""
-    startCommand: gunicorn backend:app
+    # startCommand 修正為 gunicorn app:app
+    # 前面的 'app' 是你的檔名 (app.py)，後面的 'app' 是 Flask 實例名稱
+    startCommand: gunicorn app:app
     autoDeploy: true
