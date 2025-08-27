@@ -10,3 +10,10 @@ services:
         value: "1"
       - key: GUNICORN_CMD_ARGS
         value: "--preload"
+    # 添加模型文件處理
+    buildFilter:
+      paths:
+        - "*.py"
+        - "*.pkl"
+        - "requirements.txt"
+        - "*.txt"
