@@ -1,20 +1,37 @@
 from flask import Flask, request, jsonify
-from flask_cors import CORS  # 添加 CORS 支援
+from flask_cors import CORS
 import lightgbm as lgb
 import xgboost as xgb
 import numpy as np
 import joblib
+import os
 
 app = Flask(__name__)
-CORS(app)  # 啟用 CORS，允許所有域名訪問
+CORS(app)
+
+# 模型加载状态
+model_loaded = False
 
 # 載入模型
 try:
-    lgb_model = joblib.load("lightgbm_model.pkl")
-    xgb_model = joblib.load("xgboost_model.pkl")
-    print("模型載入成功")
+    # 检查模型文件是否存在
+    if os.path.exists("lightgbm_model.pkl") and os.path.exists("xgboost_model.pkl"):
+        lgb_model = joblib.load("lightgbm_model.pkl")
+        xgb_model = joblib.load("xgboost_model.pkl")
+        model_loaded = True
+        print("模型載入成功")
+    else:
+        print("模型文件不存在")
+        model_loaded = False
+        # 創建假模型用於測試
+        class DummyModel:
+            def predict_proba(self, X):
+                return np.array([[0.45, 0.44, 0.11]])  # 模擬預測概率
+        lgb_model = DummyModel()
+        xgb_model = DummyModel()
 except Exception as e:
     print(f"模型載入失敗: {e}")
+    model_loaded = False
     # 創建假模型用於測試
     class DummyModel:
         def predict_proba(self, X):
@@ -78,19 +95,16 @@ def detect_pattern_name(flags):
         return "一般模式"
 
 # 主預測路由
-@app.route("/predict", methods=["POST", "GET"])  # 支援 GET 和 POST
+@app.route("/predict", methods=["POST", "GET"])
 def predict():
     try:
         if request.method == 'GET':
-            # 處理 GET 請求（方便測試）
             roadmap_str = request.args.get('roadmap', '')
             roadmap = roadmap_str.split(',') if roadmap_str else []
         else:
-            # 處理 POST 請求
             data = request.get_json()
             roadmap = data.get("roadmap", [])
         
-        # 確保 roadmap 是列表格式
         if isinstance(roadmap, str):
             roadmap = roadmap.split(',')
         
@@ -100,7 +114,6 @@ def predict():
                 "example": "banker,player,banker,player"
             }), 400
         
-        # 轉換輸入格式（兼容不同格式）
         cleaned_roadmap = []
         for item in roadmap:
             if item.lower() in ['b', 'banker', '庄']:
@@ -112,7 +125,6 @@ def predict():
             else:
                 cleaned_roadmap.append(item.lower())
         
-        # 特徵提取
         X, feature_flags = enhanced_roadmap_to_features(cleaned_roadmap)
         
         if X is None:
@@ -123,28 +135,38 @@ def predict():
         xgb_pred = xgb_model.predict_proba(X)[0]
         final_pred = (np.array(lgb_pred) + np.array(xgb_pred)) / 2
         
-        # 建議下注
+        # 獲取預測概率
+        banker_prob = round(final_pred[0], 4)
+        player_prob = round(final_pred[1], 4)
+        tie_prob = round(final_pred[2], 4)
+        
+        # 確定最高概率和對應的建議
+        max_prob = max(banker_prob, player_prob, tie_prob)
         labels = ["banker", "player", "tie"]
         suggestion_index = np.argmax(final_pred)
         suggestion = labels[suggestion_index]
         
-        # 置信度計算
-        confidence = round(final_pred[suggestion_index], 4)
+        # 添加观望逻辑 - 如果最高概率不够高，建议观望
+        if max_prob < 0.5:  # 可以调整这个阈值
+            suggestion = "觀望"
+            confidence = 0
+        else:
+            confidence = round(max_prob, 4)
         
-        # CodePen 友好的回應格式
         return jsonify({
             "success": True,
+            "model_loaded": model_loaded,  # 添加模型加载状态
             "predictions": {
-                "banker": round(final_pred[0], 4),
-                "player": round(final_pred[1], 4),
-                "tie": round(final_pred[2], 4)
+                "banker": banker_prob,
+                "player": player_prob,
+                "tie": tie_prob
             },
             "suggestion": suggestion,
             "confidence": confidence,
             "pattern": detect_pattern_name(feature_flags),
             "current_streak": feature_flags.get('current_streak', 0),
             "input_length": len(cleaned_roadmap),
-            "roadmap": cleaned_roadmap[-10:]  # 返回最後10局用於顯示
+            "roadmap": cleaned_roadmap[-10:]
         })
         
     except Exception as e:
@@ -154,12 +176,13 @@ def predict():
             "message": "預測過程中發生錯誤"
         }), 500
 
-# 健康檢查路由（給 Render 用）
+# 健康檢查路由
 @app.route("/")
 def health_check():
     return jsonify({
         "status": "active",
         "message": "Baccarat Prediction API is running",
+        "model_loaded": model_loaded,  # 添加模型加载状态
         "endpoints": {
             "GET /predict?roadmap=banker,player,banker": "測試預測",
             "POST /predict": "正式預測"
@@ -169,14 +192,22 @@ def health_check():
 # 測試路由
 @app.route("/test")
 def test_predict():
-    # 測試用數據
     test_roadmap = ['banker', 'player', 'banker', 'player', 'banker']
     X, features = enhanced_roadmap_to_features(test_roadmap)
+    
+    # 測試模型預測
+    lgb_pred = lgb_model.predict_proba(X)[0]
+    xgb_pred = xgb_model.predict_proba(X)[0]
+    final_pred = (np.array(lgb_pred) + np.array(xgb_pred)) / 2
     
     return jsonify({
         "test_data": test_roadmap,
         "features": features,
-        "feature_vector": X.tolist()
+        "feature_vector": X.tolist(),
+        "lgb_pred": lgb_pred.tolist(),
+        "xgb_pred": xgb_pred.tolist(),
+        "final_pred": final_pred.tolist(),
+        "model_loaded": model_loaded
     })
 
 if __name__ == "__main__":
