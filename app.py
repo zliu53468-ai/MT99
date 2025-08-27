@@ -1,140 +1,45 @@
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-import numpy as np
+# ✅ 模式偵測函式
+def detect_patterns(roadmap):
+    """
+    偵測當前牌路模式：
+    - single_jump: 單跳
+    - double_jump_room: 雙跳一房兩廳
+    - long_dragon_break: 長龍破點預警
+    - long_dragon_recover: 長龍斷後回補
+    """
+    patterns = []
+    clean_road = [x for x in roadmap if x in ["莊", "閒"]]  # 過濾和局
 
-app = Flask(__name__)
-CORS(app)
-
-# ✅ 馬可夫轉移矩陣
-transition_matrix = {
-    "莊": {"莊": 0.6, "閒": 0.3, "和": 0.1},
-    "閒": {"莊": 0.4, "閒": 0.5, "和": 0.1},
-    "和": {"莊": 0.5, "閒": 0.4, "和": 0.1}
-}
-
-# ✅ 建構格狀路單
-def build_grid(roadmap):
-    grid = {}
-    col = 0
-    row = 0
-    last = None
-    max_rows = 6
-
-    for item in roadmap:
-        if item not in ["莊", "閒", "和"]:
-            continue
-        if item == last and row < max_rows - 1:
-            row += 1
-        else:
-            col += 1
-            row = 0
-        grid[(col, row)] = item
-        last = item
-    return grid
-
-# ✅ 分析格狀路單特徵
-def analyze_grid(grid):
-    long_streaks = 0
-    zigzag_count = 0
-    tie_influence = 0
-
-    for col in range(1, 30):
-        streak = 0
-        for row in range(6):
-            key = (col, row)
-            if key in grid:
-                if row > 0 and grid[(col, row)] == grid[(col, row - 1)]:
-                    streak += 1
-        if streak >= 3:
-            long_streaks += 1
-
-    for col in range(1, 30):
-        for row in range(1, 6):
-            a = grid.get((col, row))
-            b = grid.get((col, row - 1))
-            if a and b and a != b:
-                zigzag_count += 1
-
-    tie_influence = sum(1 for v in grid.values() if v == "和")
-
-    return {
-        "long_streaks": long_streaks,
-        "zigzag_count": zigzag_count,
-        "tie_influence": tie_influence
-    }
-
-# ✅ 特徵抽取函式
-def extract_features(roadmap):
-    features = {
-        "banker_streak": 0,
-        "player_streak": 0,
-        "jump_count": 0,
-        "long_banker": 0,
-        "long_player": 0
-    }
-    streak = 0
-    last = None
-    for item in roadmap:
-        if item in ["莊", "閒"]:
-            if item == last:
-                streak += 1
+    # --- 長龍檢測 ---
+    if len(clean_road) >= 4:
+        streak_len = 1
+        for i in range(len(clean_road)-1, 0, -1):
+            if clean_road[i] == clean_road[i-1]:
+                streak_len += 1
             else:
-                streak = 1
-            if item == "莊":
-                features["banker_streak"] = max(features["banker_streak"], streak)
-            else:
-                features["player_streak"] = max(features["player_streak"], streak)
-            last = item
-        elif item == "跳":
-            features["jump_count"] += 1
-        elif item == "長莊":
-            features["long_banker"] += 1
-        elif item == "長閒":
-            features["long_player"] += 1
-    return np.array(list(features.values())).reshape(1, -1)
+                break
+        if streak_len >= 4:
+            patterns.append("long_dragon")
+            # 偵測破點
+            if len(clean_road) > streak_len:
+                prev = clean_road[-streak_len-1]
+                if prev != clean_road[-1]:
+                    patterns.append("long_dragon_break")
+            # 偵測回補
+            if len(clean_road) >= streak_len+2:
+                if clean_road[-streak_len-1] != clean_road[-1] and clean_road[-1] == clean_road[-streak_len-2]:
+                    patterns.append("long_dragon_recover")
 
-# ✅ 馬可夫預測函式
-def markov_predict(roadmap):
-    last = next((x for x in reversed(roadmap) if x in ["莊", "閒", "和"]), None)
-    if last and last in transition_matrix:
-        return transition_matrix[last]
-    else:
-        return {"莊": 0.33, "閒": 0.33, "和": 0.34}
+    # --- 單跳檢測 ---
+    if len(clean_road) >= 4 and all(clean_road[i] != clean_road[i-1] for i in range(1, len(clean_road))):
+        patterns.append("single_jump")
 
-# ✅ 混合預測函式（馬可夫 + 特徵 + 路單分析）
-def hybrid_predict(features, roadmap):
-    markov = markov_predict(roadmap)
-    banker_streak, player_streak, jump_count, long_banker, long_player = features[0]
+    # --- 雙跳一房兩廳檢測 ---
+    # 雙跳：連續兩個一樣 -> 換色 -> 連續兩個一樣
+    if len(clean_road) >= 6:
+        last6 = clean_road[-6:]
+        if (last6[0] == last6[1] and last6[2] == last6[3] and last6[4] == last6[5]
+            and last6[0] != last6[2] != last6[4]):
+            patterns.append("double_jump_room")
 
-    grid = build_grid(roadmap)
-    grid_analysis = analyze_grid(grid)
-
-    feature_score = {
-        "莊": 0.5 + 0.05 * banker_streak + 0.03 * long_banker + 0.04 * grid_analysis["long_streaks"],
-        "閒": 0.5 + 0.05 * player_streak + 0.03 * long_player + 0.04 * grid_analysis["zigzag_count"],
-        "和": 0.1 + 0.02 * jump_count + 0.03 * grid_analysis["tie_influence"]
-    }
-
-    final = {}
-    for key in ["莊", "閒", "和"]:
-        final[key] = 0.7 * markov[key] + 0.3 * feature_score[key]
-
-    total = sum(final.values())
-    return {
-        "banker": round(final["莊"] / total, 2),
-        "player": round(final["閒"] / total, 2),
-        "tie": round(final["和"] / total, 2),
-        "grid_analysis": grid_analysis
-    }
-
-# ✅ API 路由
-@app.route("/predict", methods=["POST"])
-def predict():
-    data = request.get_json()
-    roadmap = data.get("roadmap", [])
-    features = extract_features(roadmap)
-    prediction = hybrid_predict(features, roadmap)
-    return jsonify(prediction)
-
-if __name__ == "__main__":
-    app.run(debug=True)
+    return patterns
