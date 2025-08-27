@@ -3,8 +3,8 @@ services:
     name: baccarat-api
     env: python
     plan: free
-    buildCommand: ""
-    # startCommand 修正為 gunicorn app:app
-    # 前面的 'app' 是你的檔名 (app.py)，後面的 'app' 是 Flask 實例名稱
+    buildCommand: pip install -r requirements.txt
     startCommand: gunicorn app:app
     autoDeploy: true
+
+
