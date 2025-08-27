@@ -1,100 +1,96 @@
-# 為了處理 CORS (跨來源資源共享)，需要安裝此套件：
-# pip install flask-cors
+# pip install flask flask-cors scikit-learn joblib
 
 from flask import Flask, request, jsonify
-from flask_cors import CORS  # 導入 CORS
+from flask_cors import CORS
 import os
+import joblib
+import numpy as np
+from sklearn.linear_model import SGDClassifier
+from datetime import datetime
 
 app = Flask(__name__)
-CORS(app)  # 啟用 CORS，允許跨網域請求
+CORS(app)
 
-def detect_patterns(roadmap):
-    """
-    偵測當前牌路模式：
-    - single_jump: 單跳
-    - double_jump_room: 雙跳一房兩廳
-    - long_dragon_break: 長龍破點預警
-    - long_dragon_recover: 長龍斷後回補
-    """
-    patterns = []
+MODEL_PATH = "model.pkl"
+BACKUP_DIR = "model_backups"
 
-    if not roadmap or not isinstance(roadmap, list):
-        return patterns  # 防呆：空值或格式錯誤直接返回
+# === 初始化或載入模型 ===
+def init_model():
+    clf = SGDClassifier(loss="log_loss")
+    # 第一次 partial_fit 需要定義類別標籤
+    clf.partial_fit(np.zeros((1, 8)), [0], classes=[0, 1])
+    return clf
 
-    clean_road = [x for x in roadmap if x in ["莊", "閒"]]  # 過濾和局
+if os.path.exists(MODEL_PATH):
+    model = joblib.load(MODEL_PATH)
+else:
+    model = init_model()
+
+# 建立備份資料夾
+if not os.path.exists(BACKUP_DIR):
+    os.makedirs(BACKUP_DIR)
+
+# === 特徵工程：將 roadmap 轉成數值向量 ===
+def extract_features(roadmap):
+    clean_road = [x for x in roadmap if x in ["莊", "閒"]]
     if not clean_road:
-        return patterns  # 全是和局，直接返回
+        return np.zeros(8)
 
-    # --- 長龍檢測 ---
-    if len(clean_road) >= 4:
-        streak_len = 1
-        for i in range(len(clean_road)-1, 0, -1):
-            if clean_road[i] == clean_road[i-1]:
-                streak_len += 1
-            else:
-                break
-        if streak_len >= 4:
-            patterns.append("long_dragon")
-            # 偵測破點（索引安全）
-            if len(clean_road) > streak_len:
-                prev_index = len(clean_road) - streak_len - 1
-                if prev_index >= 0 and clean_road[prev_index] != clean_road[-1]:
-                    patterns.append("long_dragon_break")
-            # 偵測回補（索引安全）
-            if len(clean_road) >= streak_len + 2:
-                if (clean_road[-streak_len-1] != clean_road[-1] and
-                    clean_road[-1] == clean_road[-streak_len-2]):
-                    patterns.append("long_dragon_recover")
+    banker_ratio = clean_road.count("莊") / len(clean_road)
+    player_ratio = clean_road.count("閒") / len(clean_road)
 
-    # --- 單跳檢測（最近 4 局交錯）---
-    if len(clean_road) >= 4:
-        recent = clean_road[-4:]
-        if all(recent[i] != recent[i-1] for i in range(1, 4)):
-            patterns.append("single_jump")
+    # 連勝長度
+    streak_len = 1
+    for i in range(len(clean_road) - 1, 0, -1):
+        if clean_road[i] == clean_road[i - 1]:
+            streak_len += 1
+        else:
+            break
 
-    # --- 雙跳一房兩廳檢測（放寬條件）---
-    if len(clean_road) >= 6:
-        last6 = clean_road[-6:]
-        if (last6[0] == last6[1] and
-            last6[2] == last6[3] and
-            last6[4] == last6[5] and
-            last6[0] != last6[2]):
-            patterns.append("double_jump_room")
+    # 最近 5 局編碼 (莊=1, 閒=0, 不足補 -1)
+    recent = [(1 if r == "莊" else 0) for r in clean_road[-5:]]
+    if len(recent) < 5:
+        recent = [-1] * (5 - len(recent)) + recent
 
-    return patterns
+    return np.array([banker_ratio, player_ratio, streak_len] + recent)
 
-# 修正：將端點從 "/detect" 改為 "/predict" 以匹配前端程式碼
+# === 預測與即時學習 ===
 @app.route("/predict", methods=["POST"])
-def detect():
+def predict():
     data = request.get_json()
-    roadmap = data.get("roadmap")
-    result = detect_patterns(roadmap)
-    
-    # 因為你的前端預期回傳的格式是 {banker: ..., player: ..., tie: ...}
-    # 但你的後端目前只會回傳 {patterns: ...}
-    # 這裡我提供一個暫時的範例回傳，你需要根據你的AI模型調整這段邏輯
-    # 假設你用patterns來做預測，這裡只是範例
-    
-    # 判斷是否有長龍或單跳
-    has_long_dragon = "long_dragon" in result
-    has_single_jump = "single_jump" in result
+    roadmap = data.get("roadmap", [])
+    label = data.get("label")  # 可選，0=莊贏, 1=閒贏
 
-    # 根據偵測到的模式返回不同的機率
-    if has_long_dragon:
-        # 如果有長龍，預測長龍方勝率高
-        predictions = {"banker": 0.55, "player": 0.40, "tie": 0.05}
-    elif has_single_jump:
-        # 如果有單跳，預測跳方勝率高
-        predictions = {"banker": 0.40, "player": 0.55, "tie": 0.05}
-    else:
-        # 預設平均機率
-        predictions = {"banker": 0.45, "player": 0.45, "tie": 0.10}
+    features = extract_features(roadmap).reshape(1, -1)
 
-    # 這裡的範例是基於你提供的偵測邏輯，並非一個完整的 AI 預測模型
+    # 推論
+    probs = model.predict_proba(features)[0]
+    predictions = {
+        "banker": float(probs[0]),
+        "player": float(probs[1]),
+        "tie": 0.05
+    }
+
+    # 增量學習 + 保存 + 備份
+    if label is not None and label in [0, 1]:
+        model.partial_fit(features, [label])
+        joblib.dump(model, MODEL_PATH)
+
+        # 備份檔案（帶日期時間）
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_path = os.path.join(BACKUP_DIR, f"model_{timestamp}.pkl")
+        joblib.dump(model, backup_path)
+
     return jsonify(predictions)
 
+# === 重置模型（清零重學，可選用） ===
+@app.route("/reset_model", methods=["POST"])
+def reset_model():
+    global model
+    model = init_model()
+    joblib.dump(model, MODEL_PATH)
+    return jsonify({"status": "success", "message": "模型已重置，從零開始學習"})
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
-
